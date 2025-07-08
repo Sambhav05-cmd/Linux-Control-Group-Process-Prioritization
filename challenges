@@ -1,0 +1,13 @@
+1)memory mapping between child and parent after execve all memory mapping is erased so memory mapping without syscalls need file object
+2)cant use libraries 
+3)aslr
+4)tracepoint change for page fault when transferred to c group 
+5)parent process died,child lives on
+6)child process gets allocated memory before entering c group , fix : put child process in c group before exec
+7)cant use mlock from parent to child
+8)c group doesnt bound rt process cpu usage
+9)hard to pin pages
+10)different tracepoint for cgroup
+11)moving child proccess to new cgroup
+12)orphan processes
+

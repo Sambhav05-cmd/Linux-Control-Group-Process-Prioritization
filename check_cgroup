@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# Display memory max for low_priority cgroup
+echo "Low Priority Memory Max:"
+cat /sys/fs/cgroup/mygroup/low_priority/memory.max
+
+# Display memory max for high_priority cgroup
+echo "High Priority Memory Max:"
+cat /sys/fs/cgroup/mygroup/high_priority/memory.max
+
+# Display processes in low_priority cgroup
+echo "Processes in Low Priority Cgroup:"
+cat /sys/fs/cgroup/mygroup/low_priority/cgroup.procs
+
+# Display processes in high_priority cgroup
+echo "Processes in High Priority Cgroup:"
+cat /sys/fs/cgroup/mygroup/high_priority/cgroup.procs
+
