@@ -1,4 +1,0 @@
-bpf maps pinned in : sambhav@sambhavIsAHost:~/OS_project$ sudo ls -l /sys/fs/bpf/monitor/
-total 0
--rw------- 1 root root 0 Apr 11 14:04 target_pids
-used control group v2
