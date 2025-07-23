@@ -23,6 +23,7 @@ Docker’s built-in docker update command introduces significant latency when mo
 🧠 Nanosecond-Level Kernel Tracing via eBPF
 
     Uses kprobe on vfs_write to track exact enforcement of memory and CPU limits
+    NOTE : Same python write overhead is present in both cgroup write from python and docker update from python so the latency difference that is measured is not affected by python overhead.
 
 🧪 Head-to-Head Latency Benchmarking
 
