@@ -1,76 +1,79 @@
-# 🚀 Real-Time Docker Resource Control Optimization Framework
+🚀 Real-Time Docker Resource Control Optimization Framework
 
-A high-performance framework for real-time Docker resource management, achieving **~6,000× lower latency** than `docker update` by using direct cgroup v2 file writes. This project also introduces **nanosecond-level kernel latency tracing** for memory and CPU limit enforcement using **eBPF**, enabling deep observability into the Linux kernel's resource control behavior.
+A high-performance framework for real-time Docker resource management and kernel-level latency tracing, achieving ~6,000× lower latency than docker update by writing directly to cgroup v2 files. This system introduces nanosecond-resolution eBPF tracing to capture the precise moment when memory and CPU limits are enforced by the Linux kernel.
 
----
+In addition to latency benchmarking, the project includes a flexible process control and monitoring framework that allows you to run workloads inside custom cgroups and plot real-time kernel metrics such as vmrss, pagefaults/sec, lru_isolate/sec, and page swaps/sec — all with minimal overhead using eBPF.
+🧠 Motivation
 
-## 🧠 Motivation
+Docker’s built-in docker update command introduces significant latency when modifying resource constraints at runtime. This framework addresses that by:
 
-Docker’s default `docker update` command introduces significant latency when modifying resource constraints at runtime. This framework:
-- Bypasses the Docker daemon by writing directly to cgroup v2 files (e.g., `memory.max`, `cpu.max`)
-- Uses **eBPF** to trace kernel enforcement timestamps at nanosecond precision
-- Enables accurate benchmarking and analysis of resource enforcement behavior across thousands of iterations
+    Bypassing the Docker daemon and writing directly to cgroup v2 control files (e.g., memory.max, cpu.max)
 
----
+    Tracing enforcement latency with nanosecond precision using eBPF (kprobe on vfs_write)
 
-## ✨ Key Features
+    Providing reproducible latency benchmarks across 10,000+ iterations
 
-- ⚡ **Ultra-Low-Latency Updates**  
-  Direct cgroup file writes reduce latency from **26.7 ms → 0.004 ms**
+    Visualizing real-time system behavior under resource constraints
 
-- 🧠 **Nanosecond-Level Kernel Tracing with eBPF**  
-  Tracks the exact kernel moment when memory/CPU limits are enforced via `vfs_write` kprobe
+✨ Key Features
+⚡ Ultra-Low-Latency Resource Updates
 
-- 🧪 **Head-to-Head Benchmarking**  
-  Compares `docker update` latency vs direct file-based updates under identical workloads
+    Direct writes to cgroup files reduce update latency from 26.7 ms → 0.004 ms
 
-- 📊 **Statistical Analysis**  
-  Benchmarks over **10,000 iterations** and reports average latencies for both strategies
+🧠 Nanosecond-Level Kernel Tracing via eBPF
 
----
+    Uses kprobe on vfs_write to track exact enforcement of memory and CPU limits
 
-## 📁 Project Structure
+🧪 Head-to-Head Latency Benchmarking
 
-├── cgroup_latency_tracer.py # Direct cgroup v2 write benchmark + eBPF tracing
-├── docker_latency_tracer.py # Docker CLI-based update benchmark + eBPF tracing
+    Compares docker update vs direct file writes under identical measurement logic
+
+📊 Statistical Analysis
+
+    Benchmarks over 10,000 iterations
+
+    Reports detailed average latencies for both update strategies
+
+📁 Project Structure
+
+├── cgroup_latency_tracer.py        # Direct cgroup write + eBPF latency trace
+├── docker_latency_tracer.py        # Docker update benchmark + eBPF trace
+├── monitor/
+│   ├── process_runner.py           # Launches controlled workloads in cgroups
+│   └── ebpf_plotter.py             # Real-time RSS, faults, swap plotting via BPF
 ├── docker-test/
-│ └── Dockerfile # Minimal container used for docker-based tests
+│   └── Dockerfile                  # Lightweight test container for docker benchmarks
 
+⚙️ Requirements
 
----
+    Linux with cgroup v2 enabled
 
-## ⚙️ Requirements
+    Docker with --cgroupns=host support
 
-- Linux with **cgroup v2** enabled
-- **Docker** with `--cgroupns=host` support
-- Python 3
-- [BCC](https://github.com/iovisor/bcc) (`sudo apt install bpfcc-tools libbpfcc-dev python3-bcc`)
+    Python 3
 
----
+    BCC / eBPF tools:
 
-## 🧪 How to Run
+    sudo apt install bpfcc-tools libbpfcc-dev python3-bcc
 
-### 1. Benchmark Direct Cgroup Writes (Low-Latency Path)
-```bash
+🧪 How to Run
+1. Benchmark Direct Cgroup Writes (Low-Latency Path)
+
 sudo python3 cgroup_latency_tracer.py
 
-    Creates a cgroup under /sys/fs/cgroup/
+    Writes to memory.max and cpu.max directly
 
-    Alternates memory.max and cpu.max values
-
-    Traces vfs_write timestamps for precise enforcement latency
+    Traces kernel vfs_write to measure enforcement latency
 
 2. Benchmark Docker Update Latency
 
 sudo python3 docker_latency_tracer.py
 
-    Builds a container image from ./docker-test/
+    Runs a test container
 
-    Runs the container with --cgroupns=host
+    Modifies its limits via docker update
 
-    Uses docker update for resource changes
-
-    Traces kernel-level enforcement timestamps via eBPF
+    Uses the same vfs_write tracing logic
 
 📊 Sample Output
 
@@ -79,15 +82,36 @@ sudo python3 docker_latency_tracer.py
 📊 Average cpu.max latency via docker update:    25.941 ms
 📊 Average cpu.max latency via cgroup write:     0.003 ms
 
+🔬 Extension: Real-Time Process Monitoring Framework
+
+Beyond benchmarking, this repo includes a modular runtime controller that:
+
+    Launches user-defined processes into custom cgroups
+
+    Dynamically adjusts memory/CPU constraints
+
+    Plots the following kernel metrics in real time:
+
+        vmrss / (vmrss + vmswap)
+
+        pagefaults/sec
+
+        lru_isolate/sec
+
+        pageswaps/sec
+
+All graphs are powered by eBPF for low-overhead, high-frequency sampling, ideal for evaluating scheduling and memory policies in real workloads.
 🔍 Novelty & Insights
 
 This project is among the first to:
 
-    Use eBPF to trace kernel-level resource enforcement latency
+    Use eBPF to measure true kernel-level latency of resource enforcement
 
-    Compare Docker vs native cgroup v2 file updates with such precision
+    Benchmark Docker vs native cgroup mechanisms with nanosecond granularity
 
-    Quantify and visualize how container runtime abstraction impacts real-time control
+    Provide a combined system for enforcement and observability in real time
+
+    Quantify the hidden overhead of container abstraction layers
 
 📜 License
 
@@ -95,5 +119,5 @@ MIT
 👨‍🔬 Author
 
 Sambhav Singh
-B.Tech, AI | NITK
+B.Tech, Artificial Intelligence | NITK
 GitHub: @Sambhav05-cmd
