@@ -1,2 +1,3 @@
 uing lru reclaim trace point instead of lru isolate
 seeing effect of swappiness of c group 
+seeing pure docker daemon overhead without socket communication

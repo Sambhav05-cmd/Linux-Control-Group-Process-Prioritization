@@ -15,6 +15,9 @@ start_time = time.time()
 bpf_code = """
 #include <uapi/linux/ptrace.h>
 #include <linux/sched.h>
+#include <linux/fs.h>
+#include <linux/dcache.h>
+
 #define TASK_RUNNING        0x00000000
 #define TASK_INTERRUPTIBLE  0x00000001
 #define TASK_UNINTERRUPTIBLE 0x00000002
@@ -37,11 +40,13 @@ struct PageEventStats {
     u64 swap_out_count;
     u64 lru_isolate_count;
     u64 last_memcg_charge_ts;
+    u64 last_seen_limit;
 };
 
 BPF_HASH(counter, u32, struct SchedStats);
 BPF_HASH(pagefaults, u32, struct PageEventStats);
 BPF_HASH(target_pid, u32, u32);
+BPF_HASH(last_write_ts, u32, u64);  // 👈 new map to store write timestamp
 
 static __inline u64 get_time() {
     return bpf_ktime_get_ns()/1000000;
@@ -232,32 +237,55 @@ TRACEPOINT_PROBE(sched, sched_wakeup_new) {
     return 0;
 }
 
-int trace_memcg_charge(struct pt_regs *ctx) {
-    u32 pid = bpf_get_current_pid_tgid() >> 32;
-    u32 zero = 0;
-    u64 now = bpf_ktime_get_ns();
-    u32 *my_pid_ptr = target_pid.lookup(&zero);
-    if (!my_pid_ptr || pid != *my_pid_ptr)
-        return 0;
+#define NAME_BUF_LEN 32
 
-    struct PageEventStats *s = pagefaults.lookup(&pid);
-    if (s) {
-        s->last_memcg_charge_ts = now;
-    } else {
-        struct PageEventStats init = {};
-        init.fault_count = 0;
-        init.swap_out_count = 0;
-        init.lru_isolate_count = 0;
-        init.last_memcg_charge_ts = now;
-        pagefaults.update(&pid, &init);
+int trace_write(struct pt_regs *ctx, struct file *file, const char __user *buf, size_t count, loff_t *pos) {
+    struct dentry *dentry = file->f_path.dentry;
+    const char *name = dentry->d_name.name;
+
+    char filename[NAME_BUF_LEN];
+    bpf_probe_read_str(&filename, sizeof(filename), name);
+
+    if (
+        (
+            filename[0] == 'm' &&
+            filename[1] == 'e' &&
+            filename[2] == 'm' &&
+            filename[3] == 'o' &&
+            filename[4] == 'r' &&
+            filename[5] == 'y' &&
+            filename[6] == '.' &&
+            filename[7] == 'm' &&
+            filename[8] == 'a' &&
+            filename[9] == 'x' &&
+            !filename[10]
+        ) ||
+        (
+            filename[0] == 'c' &&
+            filename[1] == 'p' &&
+            filename[2] == 'u' &&
+            filename[3] == '.' &&
+            filename[4] == 'm' &&
+            filename[5] == 'a' &&
+            filename[6] == 'x' &&
+            !filename[7]
+        )
+    ) {
+        u32 pid = bpf_get_current_pid_tgid() >> 32;
+        u64 now = bpf_ktime_get_ns();
+        u32 key = 0;
+        last_write_ts.update(&key, &now);
+        bpf_trace_printk("%s written by pid=%d\\n", filename, pid);
     }
 
     return 0;
 }
 
+
 """
 
 b = BPF(text=bpf_code)
+b.attach_kprobe(event="vfs_write", fn_name="trace_write")
 
 cgroup_path = "/sys/fs/cgroup/mygroup/high_priority/cgroup.procs"
 
@@ -340,10 +368,6 @@ def second_child_fn(child_pid):
 
         time.sleep(0.7)
     exit(0)
-
-
-#with open("/sys/fs/cgroup/mygroup/low_priority/cgroup.procs", "w") as f:
-#    f.write(str(os.getpid()))
 
 b["target_pid"][ct.c_uint(0)] = ct.c_uint(child_pid)
 nice_level = 0
@@ -468,7 +492,7 @@ def prioritize_memory():
     if key in b["pagefaults"]:
         old_ts = b["pagefaults"][key].last_memcg_charge_ts
 
-    t0 = time.time_ns()
+    t0 = time.monotonic_ns()
 
     # Step 1–6
     with open(parent_mem_file, "r+") as pf:
@@ -500,18 +524,74 @@ def prioritize_memory():
     with open(parent_mem_file, "w") as pf:
         pf.write(str(parent_val))
 
-    # Wait until timestamp changes in BPF map
-    print("⏳ Waiting for mem_cgroup_charge()...")
-    for _ in range(10000):  # ~10 ms max spin
-        val = b["pagefaults"].get(key)
-        if val and val.last_memcg_charge_ts != old_ts:
-            t1 = val.last_memcg_charge_ts
+    print("⏳ Waiting for memory.max write...")
+    for _ in range(10000):  # ~10 ms spin
+        ts_val = b["last_write_ts"].get(ct.c_uint(0))
+        if ts_val and ts_val.value != old_ts:
+            t1 = ts_val.value
             latency_ms = (t1 - t0) / 1e6
             print(f"🧨 Enforcement latency: {latency_ms:.3f} ms")
             return
-    print("⚠️ mem_cgroup_charge not detected after memory increase.")
-    val = b["pagefaults"].get(key)
-    print(val)
+
+    print("⚠️ memory.max write not detected.")
+
+def prioritize_cpu():
+    high_path = "/sys/fs/cgroup/mygroup/high_priority"
+    low_path = "/sys/fs/cgroup/mygroup/low_priority"
+    parent_path = "/sys/fs/cgroup/mygroup"
+
+    high_procs_file = os.path.join(high_path, "cgroup.procs")
+    high_cpu_file = os.path.join(high_path, "cpu.max")
+    low_cpu_file = os.path.join(low_path, "cpu.max")
+    parent_cpu_file = os.path.join(parent_path, "cpu.max")
+
+    delta = 500  # microseconds (10ms slice increase)
+
+    t0 = time.monotonic_ns()
+    key = ct.c_uint(0)
+    old_ts = b["last_write_ts"].get(key).value if key in b["last_write_ts"] else 0
+
+    def parse_cpu_max(path):
+        with open(path) as f:
+            val = f.read().strip()
+        if val == "max":
+            raise RuntimeError(f"{path} has no cpu.max quota")
+        parts = val.split()
+        if len(parts) != 2:
+            raise RuntimeError(f"Unexpected cpu.max format in {path}")
+        return int(parts[0]), int(parts[1])  # quota, period
+
+    # Read current values
+    parent_quota, period = parse_cpu_max(parent_cpu_file)
+    high_quota, _ = parse_cpu_max(high_cpu_file)
+    low_quota, _ = parse_cpu_max(low_cpu_file)
+
+    if low_quota < delta:
+        raise RuntimeError("Not enough CPU quota in low_priority to reduce")
+
+    # Perform quota shifts
+    with open(parent_cpu_file, "w") as f:
+        f.write(f"{parent_quota + delta} {period}")
+    with open(high_cpu_file, "w") as f:
+        f.write(f"{high_quota + delta} {period}")
+    with open(high_procs_file, "w") as f:
+        f.write(str(child_pid))
+    with open(low_cpu_file, "w") as f:
+        f.write(f"{low_quota - delta} {period}")
+    with open(parent_cpu_file, "w") as f:
+        f.write(f"{parent_quota} {period}")
+
+    print("⏳ Waiting for cpu.max write...")
+    for _ in range(10000):  # ~10 ms spin
+        ts_val = b["last_write_ts"].get(ct.c_uint(0))
+        if ts_val and ts_val.value != old_ts:
+            t1 = ts_val.value
+            latency_ms = (t1 - t0) / 1e6
+            print(f"🧨 Enforcement latency: {latency_ms:.3f} ms")
+            return
+
+    print("⚠️ cpu.max write not detected.")
+
 
 def handle_exit(sig, frame):
     print_stats()
@@ -530,7 +610,9 @@ while True:
         reduce_oom_score()
     elif ch == 's':
         print_stats()
-    elif ch == 'm':
+    elif ch == 'ml':
         prioritize_memory()
+    elif ch == 'cl':
+        prioritize_cpu()
     elif ch == 'q':
         handle_exit(None, None)

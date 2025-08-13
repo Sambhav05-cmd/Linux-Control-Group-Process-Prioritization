@@ -16,5 +16,6 @@ cat /sys/fs/cgroup/mygroup/high_priority/memory.max
 cat /sys/fs/cgroup/mygroup/low_priority/cgroup.procs
 cat /sys/fs/cgroup/mygroup/high_priority/cgroup.procs
 sudo pkill -f python3
+sudo cat /sys/kernel/debug/tracing/trace_pipe
 
 

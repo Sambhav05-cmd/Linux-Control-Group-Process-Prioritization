@@ -16,23 +16,30 @@ echo 0 | sudo tee "$CGROUP_PARENT_PATH/cpuset.mems" >/dev/null
 
 # Set parent memory and CPU limits
 echo $((30 * 1024 * 1024)) | sudo tee "$CGROUP_PARENT_PATH/memory.max" >/dev/null
-echo "20000 100000" | sudo tee "$CGROUP_PARENT_PATH/cpu.max" >/dev/null
+echo "10000 100000" | sudo tee "$CGROUP_PARENT_PATH/cpu.max" >/dev/null  # 20ms out of 100ms = 20%
 
 # Enable controllers for child cgroups
 echo "+cpu +memory +cpuset" | sudo tee "$CGROUP_PARENT_PATH/cgroup.subtree_control" >/dev/null
 
-# Create high_priority with 15 MB memory
+# Create high_priority group
 HIGH_PATH="$CGROUP_PARENT_PATH/high_priority"
 sudo mkdir -p "$HIGH_PATH"
 echo 0 | sudo tee "$HIGH_PATH/cpuset.cpus" >/dev/null
 echo 0 | sudo tee "$HIGH_PATH/cpuset.mems" >/dev/null
 echo $((15 * 1024 * 1024)) | sudo tee "$HIGH_PATH/memory.max" >/dev/null
+echo "5000 100000" | sudo tee "$HIGH_PATH/cpu.max" >/dev/null  # 10ms of CPU every 100ms
 
-# Create low_priority with 15 MB memory
+# Create low_priority group
 LOW_PATH="$CGROUP_PARENT_PATH/low_priority"
 sudo mkdir -p "$LOW_PATH"
 echo 0 | sudo tee "$LOW_PATH/cpuset.cpus" >/dev/null
 echo 0 | sudo tee "$LOW_PATH/cpuset.mems" >/dev/null
 echo $((15 * 1024 * 1024)) | sudo tee "$LOW_PATH/memory.max" >/dev/null
+echo "5000 100000" | sudo tee "$LOW_PATH/cpu.max" >/dev/null  # 10ms of CPU every 100ms
 
+# ... [your existing script]
+
+# Launch monitoring servers
+python3 memory_server_2.py &
+python3 processor_server_2.py &
 

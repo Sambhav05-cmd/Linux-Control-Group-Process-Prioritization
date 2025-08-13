@@ -240,6 +240,8 @@ int trace_memcg_charge(struct pt_regs *ctx) {
     if (!my_pid_ptr || pid != *my_pid_ptr)
         return 0;
 
+    bpf_trace_printk("memcg_charge: pid=%d\\n", pid);  // <-- log line
+
     struct PageEventStats *s = pagefaults.lookup(&pid);
     if (s) {
         s->last_memcg_charge_ts = now;
@@ -255,9 +257,11 @@ int trace_memcg_charge(struct pt_regs *ctx) {
     return 0;
 }
 
+
 """
 
 b = BPF(text=bpf_code)
+b.attach_kprobe(event="try_charge_memcg", fn_name="trace_memcg_charge")
 
 cgroup_path = "/sys/fs/cgroup/mygroup/high_priority/cgroup.procs"
 
@@ -340,10 +344,6 @@ def second_child_fn(child_pid):
 
         time.sleep(0.7)
     exit(0)
-
-
-#with open("/sys/fs/cgroup/mygroup/low_priority/cgroup.procs", "w") as f:
-#    f.write(str(os.getpid()))
 
 b["target_pid"][ct.c_uint(0)] = ct.c_uint(child_pid)
 nice_level = 0
@@ -468,7 +468,7 @@ def prioritize_memory():
     if key in b["pagefaults"]:
         old_ts = b["pagefaults"][key].last_memcg_charge_ts
 
-    t0 = time.time_ns()
+    t0 = time.monotonic_ns()
 
     # Step 1–6
     with open(parent_mem_file, "r+") as pf:
@@ -499,7 +499,11 @@ def prioritize_memory():
         lf.write(str(low_val - delta))
     with open(parent_mem_file, "w") as pf:
         pf.write(str(parent_val))
-
+    val = b["pagefaults"].get(key)
+    if val:
+        print(f"faults: {val.fault_count}, swapouts: {val.swap_out_count}, lru: {val.lru_isolate_count}, last_charge_ts: {val.last_memcg_charge_ts / 1e6:.3f} ms")
+    else:
+        print("No mem stats available")
     # Wait until timestamp changes in BPF map
     print("⏳ Waiting for mem_cgroup_charge()...")
     for _ in range(10000):  # ~10 ms max spin
@@ -511,7 +515,11 @@ def prioritize_memory():
             return
     print("⚠️ mem_cgroup_charge not detected after memory increase.")
     val = b["pagefaults"].get(key)
-    print(val)
+    if val:
+        print(f"faults: {val.fault_count}, swapouts: {val.swap_out_count}, lru: {val.lru_isolate_count}, last_charge_ts: {val.last_memcg_charge_ts / 1e6:.3f} ms")
+    else:
+        print("No mem stats available")
+
 
 def handle_exit(sig, frame):
     print_stats()

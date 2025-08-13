@@ -10,4 +10,6 @@
 10)different tracepoint for cgroup
 11)moving child proccess to new cgroup
 12)orphan processes
-
+13)docker cgroups are read only , permission not allowed from inside docker
+14)getting path of container cgroup
+15)vfs_write called many times , filter out by filename 
